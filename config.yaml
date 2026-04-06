@@ -1,0 +1,423 @@
+# ============================================================
+# AI Digest Agent — Master Configuration
+# This file is self-evolving: Claude proposes changes via git
+# ============================================================
+
+agent:
+  name: "AI Digest Agent"
+  version: "1.0.0"
+  timezone: "Asia/Kolkata"
+
+schedule:
+  daily_trends: "0 14 30 * * 1-6"   # 8:00 PM IST (14:30 UTC) Mon-Sat
+  daily_news: "0 16 30 * * 1-6"     # 10:00 PM IST (16:30 UTC) Mon-Sat
+  weekly_trends: "0 14 30 * * 0"    # 8:00 PM IST Sunday
+  weekly_digest: "0 16 30 * * 0"    # 10:00 PM IST Sunday
+
+ai:
+  pass1:
+    provider: "gemini"
+    model: "gemini-2.5-flash"
+    temperature: 0.3
+    max_tokens: 2048
+  pass2:
+    provider: "claude"
+    model: "claude-sonnet-4-6-20250514"
+    temperature: 0.4
+    max_tokens: 4096
+
+delivery:
+  email:
+    enabled: true
+    provider: "resend"
+    to: "${EMAIL_TO}"
+    from: "${EMAIL_FROM}"
+  telegram:
+    enabled: true
+    chat_id: "${TELEGRAM_CHAT_ID}"
+  notion:
+    enabled: true
+    database_id: "${NOTION_DATABASE_ID}"
+    daily_page_parent: "${NOTION_DAILY_PARENT_ID}"
+    weekly_page_parent: "${NOTION_WEEKLY_PARENT_ID}"
+  google_sheets:
+    enabled: true
+    spreadsheet_id: "${GOOGLE_SHEETS_ID}"
+    daily_sheet: "daily_articles"
+    weekly_sheet: "weekly_rollup"
+  google_drive:
+    enabled: true
+    folder_id: "${GDRIVE_FOLDER_ID}"
+  github_archive:
+    enabled: true
+    path: "data/archive"
+
+# ============================================================
+# TAXONOMY — Self-evolving. Claude updates this via git commits.
+# Structure: main_topic > sub_topics > tool_types
+# Each article gets 1 primary tag + N secondary tags
+# ============================================================
+
+taxonomy:
+  content_creation:
+    description: "Making things — text, visuals, audio, video"
+    sub_topics:
+      image_generation:
+        tool_types: ["text-to-image", "image editing", "AI upscaling", "background removal"]
+        examples: ["Midjourney", "NanoBanana", "Flux", "DALL-E", "Ideogram", "remove.bg", "Topaz", "Magnific"]
+        related_to: ["design_tools", "media_image_utilities"]
+      video_generation:
+        tool_types: ["text-to-video", "video editing AI", "video enhancement", "deepfake & face swap"]
+        examples: ["Veo 3", "Kling 3", "Runway", "Pika", "Hailuo", "HeyGen", "Synthesia"]
+        related_to: ["media_video_utilities"]
+      audio_music:
+        tool_types: ["voice synthesis", "music generation", "audio editing", "transcription"]
+        examples: ["ElevenLabs", "Suno", "Udio", "Lyria", "WhisperFlow", "Descript"]
+        related_to: ["voice_agents", "media_audio_utilities", "meetings_comms"]
+      writing_copy:
+        tool_types: ["long-form writing", "copywriting & ads", "academic writing"]
+        examples: ["Jasper", "Sudowrite", "Copy.ai", "Writesonic", "Paperpal"]
+        related_to: ["marketing_seo"]
+      three_d_spatial:
+        tool_types: ["3D model generation", "AR/VR content"]
+        examples: ["Meshy", "Luma Genie", "Tripo", "Kaedim"]
+        related_to: []
+      presentations_design:
+        tool_types: ["slide generation", "design tools", "logo & branding"]
+        examples: ["Gamma", "Canva AI", "Figma AI", "Framer", "Beautiful.ai", "Looka"]
+        related_to: ["productivity_pm", "vibe_coding"]
+
+  development_engineering:
+    description: "Building things — code, infra, models"
+    sub_topics:
+      coding_assistants:
+        tool_types: ["IDE-integrated", "code review", "code generation CLI"]
+        examples: ["Claude Code", "Codex", "Cursor", "GitHub Copilot", "Windsurf", "CodeRabbit", "Aider"]
+        related_to: ["ai_assistants"]
+      vibe_coding:
+        tool_types: ["no-code AI builders", "website builders", "mobile app builders"]
+        examples: ["Lovable", "Bolt", "v0", "Replit Agent", "Emergent", "FlutterFlow"]
+        related_to: ["presentations_design"]
+      devops_cloud:
+        tool_types: ["deployment platforms", "CI/CD AI", "monitoring & observability"]
+        examples: ["Vercel", "Railway", "Modal", "Fly.io", "Render", "Datadog AI"]
+        related_to: ["workflow_automation"]
+      databases_vector:
+        tool_types: ["vector databases", "AI-native databases"]
+        examples: ["Pinecone", "Weaviate", "ChromaDB", "Supabase", "Neon"]
+        related_to: []
+      open_source_models:
+        tool_types: ["foundation models OSS", "fine-tuning & training", "model serving & inference"]
+        examples: ["Llama 4", "DeepSeek", "Mistral", "Qwen", "Phi", "Axolotl", "vLLM", "Ollama"]
+        related_to: ["foundation_models"]
+      developer_utilities:
+        tool_types: ["API testing & docs", "regex & data tools", "terminal & shell AI", "log analysis"]
+        examples: ["Postman AI", "Mintlify", "Warp AI", "Shell GPT", "Sentry AI"]
+        related_to: ["coding_assistants"]
+
+  intelligence_research:
+    description: "Thinking things — models, search, analysis"
+    sub_topics:
+      foundation_models:
+        tool_types: ["proprietary LLMs", "benchmarks & evals", "prompt engineering tools"]
+        examples: ["GPT-5.x", "Gemini 3.x", "Claude 4.x", "Grok", "LMSYS", "SWE-bench", "LangSmith"]
+        related_to: ["open_source_models"]
+      research_knowledge:
+        tool_types: ["research assistants", "paper discovery", "citation & writing"]
+        examples: ["NotebookLM", "Elicit", "Consensus", "Semantic Scholar", "Scite"]
+        related_to: ["productivity_pm"]
+      search_discovery:
+        tool_types: ["AI search engines", "knowledge management"]
+        examples: ["Perplexity", "Exa", "You.com", "Mem", "Recall"]
+        related_to: ["foundation_models"]
+      data_analytics:
+        tool_types: ["data analysis AI", "BI & dashboards", "spreadsheet AI"]
+        examples: ["Julius AI", "Hex", "Tableau AI", "Observable", "Rows", "Arcwise"]
+        related_to: ["google_sheets"]
+
+  agents_automation:
+    description: "Doing things — workflows, bots, assistants"
+    sub_topics:
+      workflow_automation:
+        tool_types: ["visual automation", "agent frameworks", "RPA + AI"]
+        examples: ["n8n", "Zapier", "Make.com", "LangChain", "CrewAI", "AutoGen", "UiPath AI"]
+        related_to: ["devops_cloud", "productivity_pm"]
+      ai_assistants:
+        tool_types: ["general assistants", "hardware assistants"]
+        examples: ["OpenClaw", "Cowork", "Manus", "Rabbit R1", "Humane AI Pin"]
+        related_to: ["foundation_models"]
+      browser_agents:
+        tool_types: ["web automation", "web scraping AI"]
+        examples: ["Claude in Chrome", "Mariner", "Operator", "Fellou", "Browse AI", "Apify"]
+        related_to: ["ai_assistants"]
+      voice_agents:
+        tool_types: ["voice AI platforms", "AI companions"]
+        examples: ["Vapi", "Bland", "Retell", "PlayAI", "Character.ai", "Replika"]
+        related_to: ["audio_music"]
+      customer_support:
+        tool_types: ["support chatbots", "email AI agents"]
+        examples: ["Intercom Fin", "Sierra", "Ada", "Front AI", "Help Scout AI"]
+        related_to: []
+
+  media_utilities:
+    description: "Helper tools — converters, cleaners, extractors"
+    sub_topics:
+      media_image_utilities:
+        tool_types: ["watermark removal", "format conversion", "compression", "OCR"]
+        examples: ["Watermark Remover AI", "Convertio", "TinyPNG", "Mathpix", "Google Cloud Vision"]
+        related_to: ["image_generation"]
+      media_video_utilities:
+        tool_types: ["subtitle generation", "thumbnail generation", "video compression"]
+        examples: ["WhisperFlow", "Submagic", "Kapwing", "Thumbly", "VEED"]
+        related_to: ["video_generation"]
+      media_audio_utilities:
+        tool_types: ["noise removal", "voice changers", "audio separation"]
+        examples: ["Krisp", "RTX Voice", "Voicemod AI", "LALAL.AI", "Demucs"]
+        related_to: ["audio_music"]
+      document_utilities:
+        tool_types: ["PDF AI tools", "resume builders", "contract analysis"]
+        examples: ["ChatPDF", "LightPDF", "PDF.ai", "Teal", "Rezi", "Docugami"]
+        related_to: ["research_knowledge", "legal_compliance"]
+
+  business_productivity:
+    description: "Running things — ops, marketing, comms"
+    sub_topics:
+      productivity_pm:
+        tool_types: ["project management", "note-taking AI", "calendar & scheduling"]
+        examples: ["Notion", "Linear", "Asana", "ClickUp", "Obsidian AI", "Reclaim", "Motion"]
+        related_to: ["workflow_automation"]
+      marketing_seo:
+        tool_types: ["SEO tools", "social media management", "email marketing"]
+        examples: ["Semrush AI", "Surfer AI", "Buffer AI", "Hootsuite AI", "Mailchimp AI", "Beehiiv"]
+        related_to: ["writing_copy", "social_content"]
+      meetings_comms:
+        tool_types: ["meeting transcription", "async video", "email AI"]
+        examples: ["Otter", "Fireflies", "Granola", "tl;dv", "Loom AI", "Superhuman AI"]
+        related_to: ["audio_music"]
+      sales_crm:
+        tool_types: ["sales intelligence", "CRM AI", "outreach & prospecting"]
+        examples: ["Clay", "Apollo AI", "Salesforce Einstein", "HubSpot AI", "Instantly AI"]
+        related_to: ["marketing_seo"]
+      finance_accounting:
+        tool_types: ["bookkeeping AI", "invoice & expense", "trading & quant"]
+        examples: ["Vic.ai", "Brex AI", "Ramp", "Bloomberg AI", "QuantConnect"]
+        related_to: []
+      hr_recruiting:
+        tool_types: ["resume screening", "interview AI"]
+        examples: ["HireVue", "Lever AI", "Fetcher"]
+        related_to: []
+
+  social_media_creators:
+    description: "Growing things — content, audience, monetization"
+    sub_topics:
+      social_content:
+        tool_types: ["auto-posting", "caption generation"]
+        examples: ["Buffer AI", "Publer", "Typefully", "TweetHunter"]
+        related_to: ["marketing_seo", "writing_copy"]
+      creator_monetization:
+        tool_types: ["link-in-bio tools", "course creation"]
+        examples: ["Stan", "Beacons AI", "Kajabi AI", "Skool"]
+        related_to: ["education_tech"]
+      social_analytics:
+        tool_types: ["social analytics", "trend detection"]
+        examples: ["Sprout Social AI", "Exploding Topics", "SparkToro"]
+        related_to: ["data_analytics"]
+
+  personal_ai:
+    description: "Living things — health, finance, learning"
+    sub_topics:
+      health_fitness:
+        tool_types: ["fitness AI", "nutrition AI", "mental health AI"]
+        examples: ["Whoop AI", "Fitbod", "Nourish", "Woebot", "Wysa"]
+        related_to: ["healthcare_biotech"]
+      personal_finance:
+        tool_types: ["budgeting AI", "tax AI"]
+        examples: ["Cleo", "Monarch AI", "TurboTax AI", "Keeper"]
+        related_to: ["finance_accounting"]
+      travel_lifestyle:
+        tool_types: ["trip planning AI", "fashion AI"]
+        examples: ["Roam Around", "Wanderlog", "Stitch Fix AI"]
+        related_to: []
+      learning_study:
+        tool_types: ["flashcards & quiz AI", "language learning AI"]
+        examples: ["Anki AI", "Quizlet AI", "Duolingo", "Speak", "Elsa"]
+        related_to: ["education_tech"]
+
+  frontier_ecosystem:
+    description: "Shaping things — hardware, policy, science"
+    sub_topics:
+      hardware_chips:
+        tool_types: ["GPU & AI accelerators", "edge AI devices"]
+        examples: ["NVIDIA", "Groq", "Cerebras", "AMD MI", "Jetson", "Apple Neural Engine"]
+        related_to: []
+      robotics:
+        tool_types: ["humanoid robots", "industrial automation"]
+        examples: ["Figure", "Tesla Optimus", "1X", "Unitree", "Covariant"]
+        related_to: []
+      healthcare_biotech:
+        tool_types: ["diagnostics", "drug discovery", "wearable health AI"]
+        examples: ["Med-PaLM", "PathAI", "AlphaFold", "Isomorphic Labs", "Oura AI"]
+        related_to: ["health_fitness"]
+      safety_ethics:
+        tool_types: ["AI policy & law", "alignment research", "deepfake detection"]
+        examples: ["EU AI Act", "Anthropic safety", "DeepMind safety", "Sensity"]
+        related_to: []
+      education_tech:
+        tool_types: ["K-12 AI", "higher ed AI"]
+        examples: ["Khan Academy AI", "Photomath", "Coursera AI", "Chegg AI"]
+        related_to: ["learning_study"]
+      funding_acquisitions:
+        tool_types: ["VC & funding rounds", "M&A & IPO"]
+        examples: ["Crunchbase", "PitchBook"]
+        related_to: []
+      climate_sustainability:
+        tool_types: ["carbon tracking AI", "energy optimization"]
+        examples: ["Watershed", "Persefoni", "DeepMind for data centers"]
+        related_to: []
+
+  translation_localization:
+    description: "Bridging things — languages, cultures"
+    sub_topics:
+      realtime_translation:
+        tool_types: ["text translation", "voice dubbing", "subtitle localization"]
+        examples: ["DeepL", "Google Translate AI", "Papercup", "Maestra"]
+        related_to: ["audio_music", "media_video_utilities"]
+      document_translation:
+        tool_types: ["batch translation"]
+        examples: ["Smartcat AI", "Phrase", "memoQ AI"]
+        related_to: ["document_utilities"]
+
+  legal_compliance:
+    description: "Protecting things — contracts, privacy, IP"
+    sub_topics:
+      contract_ai:
+        tool_types: ["contract review", "contract drafting"]
+        examples: ["Ironclad", "Harvey AI", "CoCounsel", "SpotDraft"]
+        related_to: ["document_utilities"]
+      compliance_tools:
+        tool_types: ["privacy & GDPR", "IP & trademark"]
+        examples: ["OneTrust AI", "Securiti", "TrademarkNow"]
+        related_to: ["safety_ethics"]
+
+  security_ai:
+    description: "Defending things — threats, vulnerabilities"
+    sub_topics:
+      threat_detection:
+        tool_types: ["cybersecurity AI", "phishing detection"]
+        examples: ["CrowdStrike AI", "Darktrace", "SentinelOne", "Abnormal Security"]
+        related_to: []
+      vulnerability_scanning:
+        tool_types: ["code security", "penetration testing AI"]
+        examples: ["Snyk AI", "Socket", "Semgrep AI", "PentestGPT"]
+        related_to: ["developer_utilities"]
+
+  accessibility:
+    description: "Including things — assistive tech, inclusion"
+    sub_topics:
+      visual_accessibility:
+        tool_types: ["alt-text generation", "screen reader AI"]
+        examples: ["Microsoft Seeing AI", "Be My Eyes AI", "JAWS AI"]
+        related_to: ["image_generation"]
+      communication_access:
+        tool_types: ["sign language AI", "speech-to-text for disabled"]
+        examples: ["SignAll", "HandTalk", "Live Transcribe", "Ava"]
+        related_to: ["audio_music"]
+
+  ecommerce_ai:
+    description: "Selling things — products, pricing, logistics"
+    sub_topics:
+      product_listing:
+        tool_types: ["product descriptions", "product photography", "pricing optimization"]
+        examples: ["Describely", "Photoroom", "Claid.ai", "Prisync AI"]
+        related_to: ["writing_copy", "image_generation"]
+      customer_experience:
+        tool_types: ["review analysis", "chatbot for stores"]
+        examples: ["Yotpo AI", "Tidio AI", "Gorgias AI"]
+        related_to: ["customer_support", "data_analytics"]
+      logistics_operations:
+        tool_types: ["inventory AI", "shipping optimization"]
+        examples: ["Inventory Planner AI", "Prediko", "ShipBob AI"]
+        related_to: []
+
+# ============================================================
+# DATA SOURCES — RSS feeds, APIs, and scraping targets
+# ============================================================
+
+sources:
+  rss_feeds:
+    - name: "TechCrunch AI"
+      url: "https://techcrunch.com/tag/artificial-intelligence/feed/"
+      category_hint: "general"
+    - name: "The Verge AI"
+      url: "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"
+      category_hint: "general"
+    - name: "Ars Technica AI"
+      url: "https://feeds.arstechnica.com/arstechnica/technology-lab"
+      category_hint: "general"
+    - name: "VentureBeat AI"
+      url: "https://venturebeat.com/category/ai/feed/"
+      category_hint: "general"
+    - name: "MIT Tech Review AI"
+      url: "https://www.technologyreview.com/feed/"
+      category_hint: "research"
+    - name: "ArXiv CS.AI"
+      url: "https://rss.arxiv.org/rss/cs.AI"
+      category_hint: "research"
+    - name: "ArXiv CS.LG"
+      url: "https://rss.arxiv.org/rss/cs.LG"
+      category_hint: "research"
+    - name: "OpenAI Blog"
+      url: "https://openai.com/blog/rss/"
+      category_hint: "foundation_models"
+    - name: "Anthropic Blog"
+      url: "https://www.anthropic.com/blog/rss"
+      category_hint: "foundation_models"
+    - name: "Google AI Blog"
+      url: "https://blog.google/technology/ai/rss/"
+      category_hint: "foundation_models"
+    - name: "Hugging Face Blog"
+      url: "https://huggingface.co/blog/feed.xml"
+      category_hint: "open_source_models"
+    - name: "The Batch (Andrew Ng)"
+      url: "https://www.deeplearning.ai/the-batch/feed/"
+      category_hint: "general"
+
+  apis:
+    hacker_news:
+      enabled: true
+      endpoint: "https://hacker-news.firebaseio.com/v0"
+      filter_keywords: ["AI", "LLM", "GPT", "Claude", "Gemini", "machine learning", "neural", "transformer", "diffusion", "agent"]
+      max_stories: 15
+    product_hunt:
+      enabled: true
+      filter_topics: ["artificial-intelligence", "machine-learning", "developer-tools"]
+      max_products: 10
+    github_trending:
+      enabled: true
+      languages: ["python", "typescript", "rust"]
+      filter_keywords: ["llm", "ai", "agent", "diffusion", "transformer", "gpt", "claude"]
+      max_repos: 10
+
+# ============================================================
+# OUTPUT SETTINGS
+# ============================================================
+
+output:
+  daily_trends:
+    max_articles: 25
+    top_picks: 5
+    include_taxonomy_check: true
+  daily_news:
+    max_articles: 30
+    group_by: "primary_tag"
+    chronological: true
+  weekly_trends:
+    aggregate_from: "stored_data"
+    include_leaderboard: true
+    include_heatmap: true
+    include_week_over_week: true
+  weekly_digest:
+    aggregate_from: "stored_data"
+    top_stories: 5
+    generate_pdf: true
+    pdf_format: "notebooklm_optimized"
