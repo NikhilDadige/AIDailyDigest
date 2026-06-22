@@ -11,7 +11,6 @@ from src.utils.logger import setup_logger
 from src.fetchers.rss_fetcher import fetch_rss_feeds
 from src.fetchers.hn_fetcher import fetch_hacker_news
 from src.fetchers.github_fetcher import fetch_github_trending
-from src.processors.claude_pass import claude_analyze
 from src.processors.taxonomy_updater import update_taxonomy
 from src.deliverers.notion_deliverer import push_to_notion
 from src.deliverers.sheets_deliverer import push_to_sheets
