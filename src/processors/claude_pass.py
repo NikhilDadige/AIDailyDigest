@@ -1,280 +1,138 @@
-"""Claude Pass 2 — Analyze compressed summaries for trends, rankings, and insights"""
-import asyncio
-import json
-import os
-from typing import Dict, List, Union
-from urllib.request import urlopen, Request
-from src.utils.config import get_taxonomy_summary
+#!/usr/bin/env python3
+"""AI Digest Agent v2 — Claude-only pipeline"""
+import argparse, asyncio, json, os, sys
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from src.utils.config import load_config
+from src.utils.logger import setup_logger
+from src.fetchers.rss_fetcher import fetch_rss_feeds
+from src.fetchers.hn_fetcher import fetch_hacker_news
+from src.fetchers.github_fetcher import fetch_github_trending
+from src.processors.claude_pass import claude_analyze
+from src.processors.taxonomy_updater import update_taxonomy
+from src.deliverers.notion_deliverer import push_to_notion
+from src.deliverers.sheets_deliverer import push_to_sheets
+from src.deliverers.email_deliverer import send_email_digest
+from src.deliverers.telegram_deliverer import send_telegram_digest
+from src.deliverers.drive_deliverer import upload_pdf_to_drive
+from src.formatters.email_formatter import format_email_html
+from src.formatters.telegram_formatter import format_telegram_message
+from src.formatters.pdf_formatter import generate_pdf
+from src.formatters.markdown_formatter import format_markdown_archive
+
+IST = timezone(timedelta(hours=5, minutes=30))
+log = setup_logger("agent")
 
 
-CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
+async def run_daily_pipeline(mode, config, dry_run=False):
+    now = datetime.now(IST)
+    log.info(f"Starting daily {mode} run at {now.strftime('%Y-%m-%d %H:%M IST')}")
 
+    log.info("Stage 1: Fetching raw articles...")
+    raw_articles = []
 
-def _call_claude(prompt: str, system: str, config: dict) -> str:
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    model = config["ai"]["pass2"]["model"]
+    rss = await fetch_rss_feeds(config["sources"]["rss_feeds"])
+    raw_articles.extend(rss)
+    log.info(f"  RSS: {len(rss)} articles")
 
-    payload = json.dumps({
-        "model": model,
-        "max_tokens": config["ai"]["pass2"]["max_tokens"],
-        "temperature": config["ai"]["pass2"]["temperature"],
-        "system": system,
-        "messages": [{"role": "user", "content": prompt}],
-    }).encode()
+    if config["sources"]["apis"]["hacker_news"]["enabled"]:
+        hn = await fetch_hacker_news(config["sources"]["apis"]["hacker_news"])
+        raw_articles.extend(hn)
+        log.info(f"  HN: {len(hn)} articles")
 
-    req = Request(
-        CLAUDE_API_URL,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        },
-        method="POST"
-    )
-    with urlopen(req, timeout=60) as resp:
-        result = json.loads(resp.read())
+    if config["sources"]["apis"]["github_trending"]["enabled"]:
+        gh = await fetch_github_trending(config["sources"]["apis"]["github_trending"])
+        raw_articles.extend(gh)
+        log.info(f"  GitHub: {len(gh)} articles")
 
-    return result["content"][0]["text"]
+    log.info(f"Total raw articles: {len(raw_articles)}")
+    if not raw_articles:
+        log.warning("No articles fetched. Exiting.")
+        return
 
+    # ── Claude analysis (NO Gemini) ──
+    log.info(f"Stage 2: Claude analyzing ({mode} mode)...")
+    analysis = await claude_analyze(raw_articles, mode, config)
+    log.info("Analysis complete")
 
-SYSTEM_PROMPT = """You are an expert AI industry analyst producing a daily digest. 
-You analyze pre-processed article summaries and generate structured insights.
-Always respond with valid JSON. No markdown, no preamble."""
+    if analysis.get("taxonomy_proposals"):
+        update_taxonomy(analysis["taxonomy_proposals"], config)
 
+    if not dry_run:
+        log.info("Stage 3: Storing & delivering...")
+        await push_to_notion(analysis, mode, config)
+        await push_to_sheets(analysis, mode, config)
 
-def _build_trends_prompt(articles_json: str, taxonomy: str) -> str:
-    return f"""Analyze these AI news articles and produce a TREND REPORT.
+        archive_path = Path("data/archive") / now.strftime("%Y-%m-%d")
+        archive_path.mkdir(parents=True, exist_ok=True)
+        (archive_path / f"{mode}.md").write_text(format_markdown_archive(analysis, mode))
 
-CURRENT TAXONOMY:
-{taxonomy}
+        if config["delivery"]["email"]["enabled"]:
+            html = format_email_html(analysis, mode)
+            await send_email_digest(html, mode, config)
+            log.info("  Email sent")
 
-ARTICLES (pre-processed by Pass 1):
-{articles_json}
-
-Return a JSON object with:
-{{
-  "date": "YYYY-MM-DD",
-  "mode": "trends",
-  "total_articles": <int>,
-  "top_picks": [
-    {{
-      "title": "...",
-      "url": "...",
-      "source": "...",
-      "why_important": "1 sentence on why this matters",
-      "impact_score": <1-10>,
-      "primary_tag": "...",
-      "secondary_tags": [...]
-    }}
-  ],  // top 5 most impactful articles
-  "trend_signals": [
-    {{
-      "signal": "short description of the trend",
-      "direction": "rising" | "fading" | "new" | "breakthrough",
-      "evidence": ["article title 1", "article title 2"],
-      "affected_categories": ["sub_topic_id_1", "sub_topic_id_2"]
-    }}
-  ],  // 3-5 cross-article trend signals
-  "category_activity": {{
-    "<main_topic_id>": {{
-      "article_count": <int>,
-      "notable": "1-line summary of what happened in this category"
-    }}
-  }},
-  "articles": [
-    {{
-      "title": "...",
-      "url": "...",
-      "source": "...",
-      "summary_short": "...",
-      "summary_detailed": "...",
-      "primary_tag": "...",
-      "secondary_tags": [...],
-      "main_topic": "...",
-      "tool_names": [...],
-      "content_type": "...",
-      "impact_score": <1-10>,
-      "trend_signal": "rising" | "stable" | "fading" | null
-    }}
-  ],
-  "taxonomy_proposals": [
-    {{
-      "action": "add" | "merge" | "remove",
-      "target": "sub_topic_id or new name",
-      "parent": "main_topic_id",
-      "rationale": "why this change"
-    }}
-  ]  // empty array if no changes needed
-}}"""
-
-
-def _build_news_prompt(articles_json: str, taxonomy: str) -> str:
-    return f"""Organize these AI news articles into a clean NEWSLETTER.
-
-CURRENT TAXONOMY:
-{taxonomy}
-
-ARTICLES (pre-processed by Pass 1):
-{articles_json}
-
-Return a JSON object with:
-{{
-  "date": "YYYY-MM-DD",
-  "mode": "news",
-  "total_articles": <int>,
-  "headline": "The single most important story today in 1 sentence",
-  "sections": [
-    {{
-      "main_topic": "<main_topic_id>",
-      "topic_label": "Human-readable label",
-      "articles": [
-        {{
-          "title": "...",
-          "url": "...",
-          "source": "...",
-          "summary_short": "...",
-          "summary_detailed": "...",
-          "primary_tag": "...",
-          "secondary_tags": [...],
-          "tool_names": [...],
-          "content_type": "...",
-          "is_breaking": false
-        }}
-      ]
-    }}
-  ],  // grouped by main_topic, only include topics that have articles
-  "launches": [
-    {{
-      "name": "tool or product name",
-      "what": "1-line description",
-      "url": "...",
-      "category": "sub_topic_id"
-    }}
-  ],  // new product launches or major updates specifically
-  "taxonomy_proposals": []
-}}"""
-
-
-def _build_weekly_trends_prompt(week_data: str) -> str:
-    return f"""Aggregate this week's daily trend data into a WEEKLY TREND REPORT.
-
-WEEK DATA (daily summaries Mon-Sun):
-{week_data}
-
-Return a JSON object with:
-{{
-  "week": "YYYY-MM-DD to YYYY-MM-DD",
-  "mode": "weekly_trends",
-  "leaderboard": [
-    {{
-      "rank": 1,
-      "tool_name": "...",
-      "mentions": <int>,
-      "avg_impact": <float>,
-      "categories": ["..."],
-      "trend": "rising" | "stable" | "new"
-    }}
-  ],  // top 15 tools by mentions * impact
-  "category_heatmap": {{
-    "<main_topic_id>": {{
-      "article_count": <int>,
-      "avg_impact": <float>,
-      "hottest_subtopic": "...",
-      "trend_vs_last_week": "up" | "down" | "stable"
-    }}
-  }},
-  "biggest_movers": [
-    {{
-      "name": "tool or category",
-      "movement": "Entered top 10" | "Jumped 5 spots" | etc,
-      "why": "1-line explanation"
-    }}
-  ],
-  "emerging_themes": [
-    {{
-      "theme": "short description",
-      "evidence_count": <int>,
-      "first_seen": "day of week"
-    }}
-  ],
-  "week_summary": "3-4 sentence executive summary of the week in AI"
-}}"""
-
-
-def _build_weekly_digest_prompt(week_data: str) -> str:
-    return f"""Create a WEEKLY DIGEST from this week's data.
-
-WEEK DATA (daily summaries Mon-Sun):
-{week_data}
-
-Return a JSON object with:
-{{
-  "week": "YYYY-MM-DD to YYYY-MM-DD",
-  "mode": "weekly_digest",
-  "executive_summary": "4-5 sentence summary of the week — the 'if you read nothing else' version",
-  "top_stories": [
-    {{
-      "rank": 1,
-      "title": "...",
-      "url": "...",
-      "source": "...",
-      "why_top": "Why this was the biggest story this week",
-      "impact_score": <1-10>
-    }}
-  ],  // top 5 stories of the week
-  "by_category": [
-    {{
-      "main_topic": "...",
-      "topic_label": "...",
-      "week_summary": "2-3 sentence summary for this category",
-      "key_articles": ["title1", "title2"]
-    }}
-  ],
-  "notable_launches": [
-    {{
-      "name": "...",
-      "what": "...",
-      "url": "...",
-      "day": "Monday" | etc
-    }}
-  ],
-  "what_you_missed": [
-    {{
-      "title": "...",
-      "url": "...",
-      "why": "1-line on why it's worth reading"
-    }}
-  ]  // 3-5 articles that were important but easy to miss
-}}"""
-
-
-async def claude_analyze(
-    data: Union[List[Dict], List[str]],
-    mode: str,
-    config: dict,
-    is_weekly: bool = False
-) -> Dict:
-    taxonomy = get_taxonomy_summary(config)
-
-    if is_weekly:
-        combined = "\n---\n".join(data) if isinstance(data[0], str) else json.dumps(data)
-        if mode == "weekly_trends":
-            prompt = _build_weekly_trends_prompt(combined)
-        else:
-            prompt = _build_weekly_digest_prompt(combined)
+        if config["delivery"]["telegram"]["enabled"]:
+            await send_telegram_digest(format_telegram_message(analysis, mode), config)
     else:
-        articles_json = json.dumps(data, indent=1)
-        if mode == "trends":
-            prompt = _build_trends_prompt(articles_json, taxonomy)
-        else:
-            prompt = _build_news_prompt(articles_json, taxonomy)
+        print(json.dumps(analysis, indent=2, default=str))
 
-    result = await asyncio.to_thread(_call_claude, prompt, SYSTEM_PROMPT, config)
+    log.info(f"Daily {mode} run complete.")
+    return analysis
 
-    # Parse JSON from response (handle possible markdown wrapping)
-    text = result.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1].rsplit("```", 1)[0]
 
-    return json.loads(text)
+async def run_weekly_pipeline(mode, config, dry_run=False):
+    now = datetime.now(IST)
+    daily_mode = "trends" if mode == "weekly_trends" else "news"
+    log.info(f"Starting weekly {mode} run")
+
+    log.info("Step 1: Processing Sunday's articles...")
+    await run_daily_pipeline(daily_mode, config, dry_run)
+
+    log.info("Step 2: Reading stored week data...")
+    week_data = []
+    for i in range(7):
+        day = now - timedelta(days=6-i)
+        p = Path("data/archive") / day.strftime("%Y-%m-%d") / f"{daily_mode}.md"
+        if p.exists():
+            week_data.append(p.read_text())
+
+    if not week_data:
+        p = Path("data/archive") / now.strftime("%Y-%m-%d") / f"{daily_mode}.md"
+        if p.exists():
+            week_data = [p.read_text()]
+
+    log.info("Step 3: Claude weekly aggregation...")
+    weekly = await claude_analyze(week_data, mode, config, is_weekly=True)
+
+    if mode == "weekly_digest" and not dry_run:
+        pdf_path = generate_pdf(weekly, config)
+        if pdf_path and config["delivery"]["google_drive"]["enabled"]:
+            await upload_pdf_to_drive(pdf_path, config)
+
+    if not dry_run:
+        await push_to_notion(weekly, mode, config)
+        await push_to_sheets(weekly, mode, config)
+        if config["delivery"]["email"]["enabled"]:
+            await send_email_digest(format_email_html(weekly, mode), mode, config)
+
+    log.info(f"Weekly {mode} complete.")
+
+
+async def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", required=True, choices=["trends","news","weekly_trends","weekly_digest"])
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+    config = load_config()
+
+    if args.mode in ("trends", "news"):
+        await run_daily_pipeline(args.mode, config, args.dry_run)
+    else:
+        await run_weekly_pipeline(args.mode, config, args.dry_run)
+
+if __name__ == "__main__":
+    asyncio.run(main())
