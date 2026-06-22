@@ -13,6 +13,7 @@ from src.fetchers.hn_fetcher import fetch_hacker_news
 from src.fetchers.github_fetcher import fetch_github_trending
 from src.processors.taxonomy_updater import update_taxonomy
 from src.deliverers.notion_deliverer import push_to_notion
+from src.processors.claude_pass import claude_analyze
 from src.deliverers.sheets_deliverer import push_to_sheets
 from src.deliverers.email_deliverer import send_email_digest
 from src.deliverers.telegram_deliverer import send_telegram_digest
