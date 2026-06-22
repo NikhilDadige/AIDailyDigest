@@ -1,156 +1,138 @@
-"""Gemini Pass 1 — Compress raw articles into structured JSON summaries"""
-import asyncio
-import json
-import os
-import re
-from typing import Dict, List
-from urllib.request import urlopen, Request
+#!/usr/bin/env python3
+"""AI Digest Agent v2 — Claude-only pipeline"""
+import argparse, asyncio, json, os, sys
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from src.utils.config import load_config
+from src.utils.logger import setup_logger
+from src.fetchers.rss_fetcher import fetch_rss_feeds
+from src.fetchers.hn_fetcher import fetch_hacker_news
+from src.fetchers.github_fetcher import fetch_github_trending
+from src.processors.claude_pass import claude_analyze
+from src.processors.taxonomy_updater import update_taxonomy
+from src.deliverers.notion_deliverer import push_to_notion
+from src.deliverers.sheets_deliverer import push_to_sheets
+from src.deliverers.email_deliverer import send_email_digest
+from src.deliverers.telegram_deliverer import send_telegram_digest
+from src.deliverers.drive_deliverer import upload_pdf_to_drive
+from src.formatters.email_formatter import format_email_html
+from src.formatters.telegram_formatter import format_telegram_message
+from src.formatters.pdf_formatter import generate_pdf
+from src.formatters.markdown_formatter import format_markdown_archive
+
+IST = timezone(timedelta(hours=5, minutes=30))
+log = setup_logger("agent")
 
 
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+async def run_daily_pipeline(mode, config, dry_run=False):
+    now = datetime.now(IST)
+    log.info(f"Starting daily {mode} run at {now.strftime('%Y-%m-%d %H:%M IST')}")
 
-# Compact taxonomy for prompt (keeps token usage low)
-TAXONOMY_SHORT = """Main topics and sub-topics:
-content_creation: image_generation, video_generation, audio_music, writing_copy, three_d_spatial, presentations_design
-development_engineering: coding_assistants, vibe_coding, devops_cloud, databases_vector, open_source_models, developer_utilities
-intelligence_research: foundation_models, research_knowledge, search_discovery, data_analytics
-agents_automation: workflow_automation, ai_assistants, browser_agents, voice_agents, customer_support
-media_utilities: media_image_utilities, media_video_utilities, media_audio_utilities, document_utilities
-business_productivity: productivity_pm, marketing_seo, meetings_comms, sales_crm, finance_accounting, hr_recruiting
-social_media_creators: social_content, creator_monetization, social_analytics
-personal_ai: health_fitness, personal_finance, travel_lifestyle, learning_study
-frontier_ecosystem: hardware_chips, robotics, healthcare_biotech, safety_ethics, education_tech, funding_acquisitions, climate_sustainability
-translation_localization: realtime_translation, document_translation
-legal_compliance: contract_ai, compliance_tools
-security_ai: threat_detection, vulnerability_scanning
-accessibility: visual_accessibility, communication_access
-ecommerce_ai: product_listing, customer_experience, logistics_operations"""
+    log.info("Stage 1: Fetching raw articles...")
+    raw_articles = []
 
+    rss = await fetch_rss_feeds(config["sources"]["rss_feeds"])
+    raw_articles.extend(rss)
+    log.info(f"  RSS: {len(rss)} articles")
 
-def _call_gemini(prompt: str, model: str, api_key: str) -> str:
-    url = GEMINI_API_URL.format(model=model) + f"?key={api_key}"
+    if config["sources"]["apis"]["hacker_news"]["enabled"]:
+        hn = await fetch_hacker_news(config["sources"]["apis"]["hacker_news"])
+        raw_articles.extend(hn)
+        log.info(f"  HN: {len(hn)} articles")
 
-    payload = json.dumps({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.3,
-            "maxOutputTokens": 2048,
-            "responseMimeType": "application/json",
-        }
-    }).encode()
+    if config["sources"]["apis"]["github_trending"]["enabled"]:
+        gh = await fetch_github_trending(config["sources"]["apis"]["github_trending"])
+        raw_articles.extend(gh)
+        log.info(f"  GitHub: {len(gh)} articles")
 
-    req = Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-    with urlopen(req, timeout=30) as resp:
-        result = json.loads(resp.read())
+    log.info(f"Total raw articles: {len(raw_articles)}")
+    if not raw_articles:
+        log.warning("No articles fetched. Exiting.")
+        return
 
-    text = result["candidates"][0]["content"]["parts"][0]["text"]
-    return text
+    # ── Claude analysis (NO Gemini) ──
+    log.info(f"Stage 2: Claude analyzing ({mode} mode)...")
+    analysis = await claude_analyze(raw_articles, mode, config)
+    log.info("Analysis complete")
 
+    if analysis.get("taxonomy_proposals"):
+        update_taxonomy(analysis["taxonomy_proposals"], config)
 
-def _parse_json_safe(text: str) -> dict:
-    """Try multiple strategies to parse JSON from LLM output"""
-    text = text.strip()
+    if not dry_run:
+        log.info("Stage 3: Storing & delivering...")
+        await push_to_notion(analysis, mode, config)
+        await push_to_sheets(analysis, mode, config)
 
-    # Strip markdown code fences
-    if text.startswith("```"):
-        text = re.sub(r'^```\w*\n?', '', text)
-        text = re.sub(r'\n?```$', '', text)
-        text = text.strip()
+        archive_path = Path("data/archive") / now.strftime("%Y-%m-%d")
+        archive_path.mkdir(parents=True, exist_ok=True)
+        (archive_path / f"{mode}.md").write_text(format_markdown_archive(analysis, mode))
 
-    # Try direct parse
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
+        if config["delivery"]["email"]["enabled"]:
+            html = format_email_html(analysis, mode)
+            await send_email_digest(html, mode, config)
+            log.info("  Email sent")
 
-    # Try finding first { to last } or first [ to last ]
-    for open_c, close_c in [('{', '}'), ('[', ']')]:
-        start = text.find(open_c)
-        end = text.rfind(close_c)
-        if start != -1 and end > start:
-            try:
-                return json.loads(text[start:end+1])
-            except json.JSONDecodeError:
-                continue
+        if config["delivery"]["telegram"]["enabled"]:
+            await send_telegram_digest(format_telegram_message(analysis, mode), config)
+    else:
+        print(json.dumps(analysis, indent=2, default=str))
 
-    raise ValueError(f"Could not parse JSON from response: {text[:200]}")
+    log.info(f"Daily {mode} run complete.")
+    return analysis
 
 
-async def gemini_compress(articles: List[Dict], config: dict) -> List[Dict]:
-    compressed = []
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    model = config["ai"]["pass1"]["model"]
+async def run_weekly_pipeline(mode, config, dry_run=False):
+    now = datetime.now(IST)
+    daily_mode = "trends" if mode == "weekly_trends" else "news"
+    log.info(f"Starting weekly {mode} run")
 
-    # Process articles one at a time for reliable JSON output
-    for idx, article in enumerate(articles):
-        prompt = f"""Classify this AI news article. Return a JSON object.
+    log.info("Step 1: Processing Sunday's articles...")
+    await run_daily_pipeline(daily_mode, config, dry_run)
 
-Title: {article['title']}
-Source: {article['source']}
-Snippet: {article.get('raw_summary', '')[:500]}
+    log.info("Step 2: Reading stored week data...")
+    week_data = []
+    for i in range(7):
+        day = now - timedelta(days=6-i)
+        p = Path("data/archive") / day.strftime("%Y-%m-%d") / f"{daily_mode}.md"
+        if p.exists():
+            week_data.append(p.read_text())
 
-JSON keys:
-"summary_short": max 15 words
-"summary_detailed": max 2 sentences
-"primary_tag": pick one: {", ".join(["image_generation","video_generation","audio_music","writing_copy","three_d_spatial","presentations_design","coding_assistants","vibe_coding","devops_cloud","databases_vector","open_source_models","developer_utilities","foundation_models","research_knowledge","search_discovery","data_analytics","workflow_automation","ai_assistants","browser_agents","voice_agents","customer_support","media_image_utilities","media_video_utilities","media_audio_utilities","document_utilities","productivity_pm","marketing_seo","meetings_comms","sales_crm","finance_accounting","hr_recruiting","social_content","creator_monetization","social_analytics","health_fitness","personal_finance","travel_lifestyle","learning_study","hardware_chips","robotics","healthcare_biotech","safety_ethics","education_tech","funding_acquisitions","climate_sustainability","realtime_translation","document_translation","contract_ai","compliance_tools","threat_detection","vulnerability_scanning","visual_accessibility","communication_access","product_listing","customer_experience","logistics_operations"])}
-"main_topic": pick one: content_creation, development_engineering, intelligence_research, agents_automation, media_utilities, business_productivity, social_media_creators, personal_ai, frontier_ecosystem, translation_localization, legal_compliance, security_ai, accessibility, ecommerce_ai
-"tool_names": array of tool/product names mentioned, or empty array
-"content_type": pick one: launch, update, research, opinion, tutorial, funding, policy
+    if not week_data:
+        p = Path("data/archive") / now.strftime("%Y-%m-%d") / f"{daily_mode}.md"
+        if p.exists():
+            week_data = [p.read_text()]
 
-Return ONLY the JSON object, nothing else."""
+    log.info("Step 3: Claude weekly aggregation...")
+    weekly = await claude_analyze(week_data, mode, config, is_weekly=True)
 
-        try:
-            # Retry logic for rate limiting
-            result = None
-            for attempt in range(3):
-                try:
-                    result = await asyncio.to_thread(_call_gemini, prompt, model, api_key)
-                    break
-                except Exception as retry_err:
-                    if "429" in str(retry_err) and attempt < 2:
-                        wait = 15 * (attempt + 1)
-                        print(f"  Rate limited, waiting {wait}s...")
-                        await asyncio.sleep(wait)
-                    else:
-                        raise retry_err
+    if mode == "weekly_digest" and not dry_run:
+        pdf_path = generate_pdf(weekly, config)
+        if pdf_path and config["delivery"]["google_drive"]["enabled"]:
+            await upload_pdf_to_drive(pdf_path, config)
 
-            parsed = _parse_json_safe(result)
+    if not dry_run:
+        await push_to_notion(weekly, mode, config)
+        await push_to_sheets(weekly, mode, config)
+        if config["delivery"]["email"]["enabled"]:
+            await send_email_digest(format_email_html(weekly, mode), mode, config)
 
-            if isinstance(parsed, list):
-                parsed = parsed[0] if parsed else {}
+    log.info(f"Weekly {mode} complete.")
 
-            # Inject the fields we already know (don't rely on Gemini for these)
-            parsed["title"] = article["title"]
-            parsed["url"] = article["url"]
-            parsed["source"] = article["source"]
-            parsed.setdefault("summary_short", article["title"][:80])
-            parsed.setdefault("summary_detailed", article.get("raw_summary", "")[:200])
-            parsed.setdefault("primary_tag", article.get("category_hint", "general"))
-            parsed.setdefault("secondary_tags", [])
-            parsed.setdefault("main_topic", "intelligence_research")
-            parsed.setdefault("tool_names", [])
-            parsed.setdefault("content_type", "update")
 
-            compressed.append(parsed)
-            print(f"  Article {idx+1}/{len(articles)}: OK — {article['title'][:60]}")
+async def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", required=True, choices=["trends","news","weekly_trends","weekly_digest"])
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+    config = load_config()
 
-        except Exception as e:
-            print(f"  Warning: Gemini article {idx+1} failed: {e}")
-            compressed.append({
-                "title": article["title"],
-                "url": article["url"],
-                "source": article["source"],
-                "summary_short": article["title"][:80],
-                "summary_detailed": article.get("raw_summary", "")[:200],
-                "primary_tag": article.get("category_hint", "general"),
-                "secondary_tags": [],
-                "main_topic": "intelligence_research",
-                "tool_names": [],
-                "content_type": "update",
-            })
+    if args.mode in ("trends", "news"):
+        await run_daily_pipeline(args.mode, config, args.dry_run)
+    else:
+        await run_weekly_pipeline(args.mode, config, args.dry_run)
 
-        # 7 second delay = ~8.5 requests per minute, safely under 10 RPM limit
-        if idx < len(articles) - 1:
-            await asyncio.sleep(7)
-
-    return compressed
+if __name__ == "__main__":
+    asyncio.run(main())
